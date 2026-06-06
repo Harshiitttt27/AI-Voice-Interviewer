@@ -15,4 +15,7 @@ class InterviewSession(Base):
 
     status = Column(String, default="active")
 
+    max_questions = Column(Integer, default=5)
+    current_question_no = Column(Integer, default=1)
+
     created_at = Column(DateTime, default=datetime.utcnow)

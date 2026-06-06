@@ -1,3 +1,5 @@
+
+
 from fastapi import APIRouter, Depends, UploadFile, File, Form
 from sqlalchemy.orm import Session
 import shutil
@@ -15,6 +17,9 @@ from app.models.answer import Answer
 from app.models.evaluation import Evaluation
 from app.models.question import Question
 from app.auth.dependencies import get_current_user
+from app.models.interview import InterviewSession
+from app.services.next_question_service import generate_next_question
+from app.utils.hash import get_hash
 
 router = APIRouter(prefix="/interview", tags=["Interview"])
 
@@ -92,14 +97,14 @@ async def submit_answer(
         return {"error": "Question not found"}
 
     # -------------------------
-    # 5. Evaluate Answer (LLM)
+    # 5. Evaluate Answer
     # -------------------------
     evaluation_data = evaluate_answer(
         question=question.question_text,
         answer=transcript
     )
 
-    # safety check (VERY IMPORTANT)
+    # safety check
     if not isinstance(evaluation_data, dict):
         evaluation_data = {
             "technical_score": 0,
@@ -124,14 +129,85 @@ async def submit_answer(
     db.add(evaluation)
     db.commit()
     db.refresh(evaluation)
-    
+
+    # -------------------------
+    # 7. Get Session
+    # -------------------------
+    session = db.query(InterviewSession).filter(
+        InterviewSession.id == session_id
+    ).first()
+
+    if not session:
+        return {"error": "Session not found"}
+
+   
+
+    # -------------------------
+    # 8. Check Interview Completion
+    # -------------------------
+    if session.current_question_no >= session.max_questions:
+        session.status = "completed"
+        db.commit()
+
+        return {
+            "interview_completed": True,
+            "session_id": session.id,
+            "evaluation": {
+                "technical_score": evaluation.technical_score,
+                "communication_score": evaluation.communication_score,
+                "confidence_score": evaluation.confidence_score,
+                "feedback": evaluation.feedback
+            }
+        }
+     # -------------------------
+    # 9. Increment Question Counter
+    # -------------------------
+
+    session.current_question_no += 1
+    db.commit()
     
     # -------------------------
-    # 7. RESPONSE
+    # 10. Generate Next Question
+    # -------------------------
+    next_question_data = generate_next_question(
+        db=db,
+        session=session,
+        previous_answer=transcript,
+        previous_question=question.question_text
+    )
+
+    # -------------------------
+    # 11. Save Next Question
+    # -------------------------
+    next_question = Question(
+        session_id=session.id,
+        question_text=next_question_data["question"],
+        difficulty=next_question_data.get("difficulty", "medium"),
+        order_no=session.current_question_no + 1,
+        question_hash=get_hash(next_question_data["question"])
+    )
+
+    db.add(next_question)
+    db.commit()
+    db.refresh(next_question)
+
+    # -------------------------
+    # 12. FINAL RESPONSE (VOICE FLOW READY)
     # -------------------------
     return {
-        "session_id": session_id,
-        "question_id": question_id,
-        "transcript": transcript,
-        "evaluation": evaluation_data
+        "interview_completed": False,
+        "session_id": session.id,
+
+        "evaluation": {
+            "technical_score": evaluation.technical_score,
+            "communication_score": evaluation.communication_score,
+            "confidence_score": evaluation.confidence_score,
+            "feedback": evaluation.feedback
+        },
+
+        "next_question": {
+            "question_id": next_question.id,
+            "question": next_question.question_text,
+            "difficulty": next_question.difficulty
+        }
     }

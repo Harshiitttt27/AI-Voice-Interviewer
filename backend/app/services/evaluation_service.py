@@ -21,7 +21,6 @@ Schema:
   "communication_score": number (0-10),
   "confidence_score": number (0-10),
   "feedback": string,
-  "followup_question": string
 }}
 
 Rules:
@@ -61,6 +60,5 @@ Answer:
             "technical_score": 0,
             "communication_score": 0,
             "confidence_score": 0,
-            "feedback": f"Evaluation failed: {str(e)}",
-            "followup_question": ""
+            "feedback": f"Evaluation failed: {str(e)}"
         }
