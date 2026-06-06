@@ -211,3 +211,82 @@ async def submit_answer(
             "difficulty": next_question.difficulty
         }
     }
+## =========================
+# 3. GET SESSION DETAILS
+## =========================
+@router.get("/session/{session_id}")
+def get_session(session_id: int, db: Session = Depends(get_db)):
+
+    session = db.query(InterviewSession).filter(
+        InterviewSession.id == session_id
+    ).first()
+
+    if not session:
+        return {"error": "Session not found"}
+
+    latest_question = db.query(Question).filter(
+        Question.session_id == session_id
+    ).order_by(Question.id.desc()).first()
+
+    return {
+        "session_id": session.id,
+        "role": session.role,
+        "level": session.level,
+        "status": session.status,
+        "current_question_no": session.current_question_no,
+        "max_questions": session.max_questions,
+        "resume_mode": session.resume_context is not None,
+        "resume_context": session.resume_context,
+        "latest_question": {
+            "id": latest_question.id if latest_question else None,
+            "question": latest_question.question_text if latest_question else None,
+            "difficulty": latest_question.difficulty if latest_question else None
+        }
+    }
+## =========================
+# 4. GET ALL QUESTIONS FOR A SESSION
+## =========================
+@router.get("/session/{session_id}/questions")
+def get_session_questions(session_id: int, db: Session = Depends(get_db)):
+
+    questions = db.query(Question).filter(
+        Question.session_id == session_id
+    ).order_by(Question.id.asc()).all()
+
+    return {
+        "session_id": session_id,
+        "questions": [
+            {
+                "id": q.id,
+                "question": q.question_text,
+                "difficulty": q.difficulty
+            }
+            for q in questions
+        ]
+    }
+
+## =========================
+# 5. GET INTERVIEW REPORT
+## =========================
+@router.get("/session/{session_id}/report")
+def get_interview_report(session_id: int, db: Session = Depends(get_db)):
+
+    evaluations = db.query(Evaluation).join(Answer).join(Question).filter(
+        Question.session_id == session_id
+    ).all()
+
+    if not evaluations:
+        return {"message": "No evaluations found"}
+
+    return {
+        "session_id": session_id,
+        "report": [
+            {
+                "technical_score": e.technical_score,
+                "communication_score": e.communication_score,
+                "confidence_score": e.confidence_score,
+                "feedback": e.feedback
+            }
+            for e in evaluations
+        ]
+    }

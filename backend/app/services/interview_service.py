@@ -1,14 +1,14 @@
-# services/interview_service.py
-
 from app.models.question import Question
 from app.models.interview import InterviewSession
 from app.services.llm_service import generate_question
 from app.utils.hash import get_hash
 
 
+# -----------------------------
+# NORMAL INTERVIEW
+# -----------------------------
 def start_interview(db, user_id: int, role: str, level: str):
 
-    # 1. Create session
     session = InterviewSession(
         user_id=user_id,
         role=role,
@@ -19,43 +19,75 @@ def start_interview(db, user_id: int, role: str, level: str):
     db.commit()
     db.refresh(session)
 
-    # 2. Get previous questions for memory
-    prev_questions = db.query(Question.question_text).all()
+    prev_questions = db.query(Question.question_text).filter(
+        Question.session_id == session.id
+    ).all()
+
     prev_questions = [q[0] for q in prev_questions]
 
-    # 3. Try generating UNIQUE question (retry loop)
-    max_attempts = 5
+    question_data = generate_question(
+        role, level, prev_questions
+    )
 
-    for _ in range(max_attempts):
+    question = Question(
+        session_id=session.id,
+        question_text=question_data["question"],
+        difficulty=question_data.get("difficulty", "medium"),
+        question_hash=get_hash(question_data["question"]),
+        order_no=1
+    )
 
-        question_data = generate_question(role, level, prev_questions)
+    db.add(question)
+    db.commit()
+    db.refresh(question)
 
-        q_text = question_data["question"]
-        q_hash = get_hash(q_text)
+    return {
+        "session_id": session.id,
+        "question_id": question.id,
+        "question": question.question_text,
+        "difficulty": question.difficulty
+    }
 
-        # 4. Check duplicate
-        exists = db.query(Question).filter(
-            Question.question_hash == q_hash
-        ).first()
 
-        if not exists:
-            question = Question(
-                session_id=session.id,
-                question_text=q_text,
-                difficulty=question_data.get("difficulty", "medium"),
-                question_hash=q_hash
-            )
+# -----------------------------
+# RESUME INTERVIEW
+# -----------------------------
+def start_resume_interview(db, user_id, resume_context):
 
-            db.add(question)
-            db.commit()
-            db.refresh(question)
+    session = InterviewSession(
+        user_id=user_id,
+        role=resume_context.get("suggested_role", "general"),
+        level=resume_context.get("experience_level", "fresher"),
+        resume_context=resume_context
+    )
 
-            return {
-                "session_id": session.id,
-                "question_id": question.id,
-                "question": question.question_text,
-                "difficulty": question.difficulty
-            }
+    db.add(session)
+    db.commit()
+    db.refresh(session)
 
-    # fallback (rare case)
-    raise Exception("Failed to generate unique question after retries")
+    question_data = generate_question(
+        role=session.role,
+        level=session.level,
+        previous_questions=[],
+        context=resume_context
+    )
+
+    question = Question(
+        session_id=session.id,
+        question_text=question_data["question"],
+        difficulty=question_data.get("difficulty", "easy"),
+        question_hash=get_hash(question_data["question"]),
+        order_no=1
+    )
+
+    db.add(question)
+    db.commit()
+    db.refresh(question)
+
+    return {
+        "session_id": session.id,
+        "question_id": question.id,
+        "question": question.question_text,
+        "difficulty": question.difficulty,
+        "resume_based": True
+    }

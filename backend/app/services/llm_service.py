@@ -1,90 +1,62 @@
-# services/llm_service.py
-
 import json
 from groq import Groq
 from app.core.config import settings
 
 client = Groq(api_key=settings.GROQ_API_KEY)
 
-
-# -----------------------------
-# 1. ROLE → TOPICS MAP
-# -----------------------------
 ROLE_TOPICS = {
-    "software_engineer": [
-        "Programming basics",
-        "OOP concepts",
-        "DBMS basics",
-        "OS basics",
-        "Networking basics",
-        "API concepts"
-    ],
-
-    "hr": [
-        "Communication skills",
-        "Behavioral questions",
-        "Teamwork",
-        "Leadership",
-        "Conflict handling"
-    ],
-
-    "sales": [
-        "Customer handling",
-        "Negotiation",
-        "Communication skills",
-        "Problem solving"
-    ],
-
-    "support": [
-        "Customer support",
-        "Problem solving",
-        "Communication clarity"
-    ],
-
-    "default": [
-        "General reasoning",
-        "Communication",
-        "Problem solving"
-    ]
+    "software_engineer": ["Programming basics", "OOP", "DBMS", "OS", "Networking", "API"],
+    "hr": ["Communication", "Behavioral", "Teamwork", "Leadership", "Conflict handling"],
+    "sales": ["Customer handling", "Negotiation", "Communication", "Problem solving"],
+    "support": ["Customer support", "Problem solving", "Communication clarity"],
+    "default": ["General reasoning", "Communication", "Problem solving"]
 }
 
 
-# -----------------------------
-# 2. MAIN FUNCTION
-# -----------------------------
-def generate_question(role: str, level: str, previous_questions: list):
+def generate_question(role: str, level: str, previous_questions: list, context: dict = None):
 
-    # pick topics based on role
-    topics = ROLE_TOPICS.get(role.lower(), ROLE_TOPICS["default"])
+    context = context or {}
 
-    # last 20 questions for memory
+    base_topics = ROLE_TOPICS.get(role.lower(), ROLE_TOPICS["default"])
+
+    resume_skills = context.get("skills", [])
+    resume_domains = context.get("domains", [])
+    experience = context.get("experience_level", "N/A")
+
     used_text = "\n".join(f"- {q}" for q in previous_questions[-20:])
 
     prompt = f"""
-You are a VOICE interview question generator.
+You are an expert VOICE interview AI.
 
 STRICT RULES:
-- NO coding questions
-- NO system design questions
-- NO writing code
-- NO repetition of previous questions
-- ONLY theory or behavioral questions
-- Must be easy to speak (voice interview)
+- No coding
+- No system design
+- No repetition
+- Only theory/behavioral questions
+- Must be short and spoken-friendly
 
-Candidate Role: {role}
+Candidate:
+Role: {role}
 Level: {level}
+Experience: {experience}
 
-Allowed Topics:
-{topics}
+Base Topics:
+{base_topics}
+
+Resume Skills:
+{resume_skills}
+
+Domains:
+{resume_domains}
 
 Previously asked questions:
 {used_text}
 
-Generate ONE NEW UNIQUE QUESTION.
+Generate ONE new question.
 
-Return ONLY valid JSON:
+Return ONLY JSON:
 {{
-  "question": "string",
+  "question": "...",
   "difficulty": "easy | medium | hard"
 }}
 """
@@ -92,8 +64,7 @@ Return ONLY valid JSON:
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.3,   # low = less repetition
-        top_p=0.8
+        temperature=0.3
     )
 
     content = response.choices[0].message.content
@@ -101,7 +72,4 @@ Return ONLY valid JSON:
     try:
         return json.loads(content)
     except:
-        return {
-            "question": content,
-            "difficulty": "easy"
-        }
+        return {"question": content, "difficulty": "easy"}

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, JSON
 from datetime import datetime
 from app.core.database import Base
 
@@ -17,5 +17,6 @@ class InterviewSession(Base):
 
     max_questions = Column(Integer, default=5)
     current_question_no = Column(Integer, default=1)
+    resume_context = Column(JSON, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
