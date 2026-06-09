@@ -210,7 +210,7 @@ async def submit_answer(
 
         return {
             "interview_completed": True,
-            "email_sent": EmailService,
+            "email_sent": True,
             "session_id": session.id,
             "evaluation": {
                 "technical_score": evaluation.technical_score,
@@ -228,12 +228,6 @@ async def submit_answer(
     db.commit()
 
     
-    # -------------------------
-    # 9. Increment Question Counter
-    # -------------------------
-
-    session.current_question_no += 1
-    db.commit()
     
     # -------------------------
     # 10. Generate Next Question
