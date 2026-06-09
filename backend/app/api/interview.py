@@ -21,6 +21,14 @@ from app.models.interview import InterviewSession
 from app.services.next_question_service import generate_next_question
 from app.utils.hash import get_hash
 
+from app.agents.feedback_agent import FeedbackAgent
+from app.services.email_service import EmailService
+from app.models.user import User
+feedback_agent = FeedbackAgent()
+
+
+
+
 router = APIRouter(prefix="/interview", tags=["Interview"])
 
 
@@ -140,26 +148,87 @@ async def submit_answer(
     if not session:
         return {"error": "Session not found"}
 
-   
-
+      # -------------------------
+# 8. Check Interview Completion
+# -------------------------
     # -------------------------
     # 8. Check Interview Completion
     # -------------------------
     if session.current_question_no >= session.max_questions:
+
         session.status = "completed"
         db.commit()
 
+        # Build report data from all evaluations
+        evaluations = (
+            db.query(Evaluation)
+            .join(Answer)
+            .join(Question)
+            .filter(
+                Question.session_id == session.id
+            )
+            .all()
+        )
+
+        report_data = {
+            "session_id": session.id,
+            "report": [
+                {
+                    "technical_score": e.technical_score,
+                    "communication_score": e.communication_score,
+                    "confidence_score": e.confidence_score,
+                    "feedback": e.feedback
+                }
+                for e in evaluations
+            ]
+        }
+
+        # Generate AI feedback summary
+        feedback_summary = (
+            feedback_agent.generate_feedback_summary(
+                report_data
+            )
+        )
+
+        # Fetch current user
+        user = (
+            db.query(User)
+            .filter(User.id == user_id)
+            .first()
+        )
+
+        # Send email
+        if user:
+            try:
+                EmailService.send_feedback_email(
+                    recipient_email=user.email,
+                    candidate_name=user.name,
+                    feedback_summary=feedback_summary
+                )
+            except Exception as e:
+                print(f"Email Error: {e}")
+
         return {
             "interview_completed": True,
+            "email_sent": EmailService,
             "session_id": session.id,
             "evaluation": {
                 "technical_score": evaluation.technical_score,
                 "communication_score": evaluation.communication_score,
                 "confidence_score": evaluation.confidence_score,
                 "feedback": evaluation.feedback
-            }
+            },
+            "feedback_summary": feedback_summary
         }
-     # -------------------------
+
+    # -------------------------
+    # 9. Increment Question Counter
+    # -------------------------
+    session.current_question_no += 1
+    db.commit()
+
+    
+    # -------------------------
     # 9. Increment Question Counter
     # -------------------------
 
