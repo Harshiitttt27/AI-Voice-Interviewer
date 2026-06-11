@@ -33,7 +33,9 @@ def start_interview(db, user_id: int, role: str, level: str):
         session_id=session.id,
         question_text=question_data["question"],
         difficulty=question_data.get("difficulty", "medium"),
-        question_hash=get_hash(question_data["question"]),
+        question_hash = get_hash(
+    question_data["question"] + str(session.id)
+),
         order_no=1
     )
 
@@ -76,7 +78,9 @@ def start_resume_interview(db, user_id, resume_context):
         session_id=session.id,
         question_text=question_data["question"],
         difficulty=question_data.get("difficulty", "easy"),
-        question_hash=get_hash(question_data["question"]),
+        question_hash = get_hash(
+    question_data["question"] + str(session.id)
+),
         order_no=1
     )
 

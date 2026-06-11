@@ -274,8 +274,34 @@ async def submit_answer(
             "difficulty": next_question.difficulty
         }
     }
+ # =========================
+#  GET ALL SESSIONS FOR USER
+# =========================
+@router.get("/sessions")
+def get_all_sessions(
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user)
+):
+    sessions = db.query(InterviewSession).filter(
+        InterviewSession.user_id == user_id
+    ).order_by(InterviewSession.id.desc()).all()
+
+    return {
+        "total": len(sessions),
+        "sessions": [
+            {
+                "id": s.id,
+                "role": s.role,
+                "level": s.level,
+                "status": s.status,
+                "current_question_no": s.current_question_no,
+                "max_questions": s.max_questions
+            }
+            for s in sessions
+        ]
+    }
 ## =========================
-# 3. GET SESSION DETAILS
+#  GET SESSION DETAILS
 ## =========================
 @router.get("/session/{session_id}")
 def get_session(session_id: int, db: Session = Depends(get_db)):
@@ -307,7 +333,7 @@ def get_session(session_id: int, db: Session = Depends(get_db)):
         }
     }
 ## =========================
-# 4. GET ALL QUESTIONS FOR A SESSION
+#  GET ALL QUESTIONS FOR A SESSION
 ## =========================
 @router.get("/session/{session_id}/questions")
 def get_session_questions(session_id: int, db: Session = Depends(get_db)):
@@ -329,7 +355,7 @@ def get_session_questions(session_id: int, db: Session = Depends(get_db)):
     }
 
 ## =========================
-# 5. GET INTERVIEW REPORT
+#  GET INTERVIEW REPORT
 ## =========================
 @router.get("/session/{session_id}/report")
 def get_interview_report(session_id: int, db: Session = Depends(get_db)):
@@ -352,4 +378,37 @@ def get_interview_report(session_id: int, db: Session = Depends(get_db)):
             }
             for e in evaluations
         ]
+    }
+# =========================
+# DASHBOARD SUMMARY
+
+@router.get("/dashboard")
+def dashboard(
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user)
+):
+
+    sessions = db.query(InterviewSession).filter(
+        InterviewSession.user_id == user_id
+    ).all()
+
+    evaluations = db.query(Evaluation).join(Answer).join(Question).join(InterviewSession).filter(
+        InterviewSession.user_id == user_id
+    ).all()
+
+    total_interviews = len(sessions)
+
+    if evaluations:
+        avg_score = sum(
+            (e.technical_score + e.communication_score + e.confidence_score) / 3
+            for e in evaluations
+        ) / len(evaluations)
+    else:
+        avg_score = 0
+
+    return {
+        "total_interviews": total_interviews,
+        "avg_score": round(avg_score, 2),
+        "completed": len([s for s in sessions if s.status == "completed"]),
+        "active": len([s for s in sessions if s.status != "completed"])
     }

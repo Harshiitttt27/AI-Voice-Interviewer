@@ -1,15 +1,7 @@
-
-import './index.css'
+import AppRoutes from "./routes";
 
 function App() {
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-100">
-      <h1 className="text-3xl italic text-red-500 font-bold">
-        Voice AI Interviewer
-      </h1>
-    </div>
-  )
+  return <AppRoutes />;
 }
 
-
-export default App
+export default App;
