@@ -1,4 +1,4 @@
-import axios from "axios";
+import api from "../services/api";
 
 const API = axios.create({
   baseURL: "http://localhost:8000",
@@ -16,9 +16,9 @@ interface LoginData {
 }
 
 export const signup = async (data: SignupData) => {
-  return API.post("/auth/register", data);
+  return api.post("/auth/register", data);
 };
 
 export const login = async (data: LoginData) => {
-  return API.post("/auth/login", data);
+  return api.post("/auth/login", data);
 };
