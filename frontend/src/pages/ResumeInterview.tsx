@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from "react";
+import api from "../services/api";
 import Navbar from "../components/Navbar";
 import { Mic, MicOff, Loader2 } from "lucide-react";
-import api from "../services/api";
+import { useParams } from "react-router-dom";
 
-export default function Interview() {
+export default function ResumeInterview() {
+  const { sessionId } = useParams();
+
   const [session, setSession] = useState<any>(null);
   const [question, setQuestion] = useState<any>(null);
-
-  const [role, setRole] = useState("");
-  const [level, setLevel] = useState("Junior");
 
   const [recording, setRecording] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -17,41 +17,46 @@ export default function Interview() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunks = useRef<Blob[]>([]);
 
+  // ================= INIT RESUME FLOW =================
   useEffect(() => {
-    setRole("");
-    setLevel("Junior");
-    setSession(null);
-    setQuestion(null);
-  }, []);
+    if (sessionId) {
+      startFromResume(sessionId);
+    }
+  }, [sessionId]);
 
-  // ================= START INTERVIEW =================
-  const startInterview = async () => {
+  // ================= LOAD RESUME CONTEXT + START =================
+  const startFromResume = async (id: string) => {
     try {
-      if (!role.trim()) {
-        alert("Please enter role");
-        return;
-      }
-
       setLoading(true);
 
-      const res = await api.post("/interview/start", {
-        role: role.trim(),
-        level,
+      // 1. Get resume context
+      const res = await api.get(`/resume/session/${id}`);
+
+      const context = res.data.resume_context;
+
+      // 2. Start interview using extracted role/level
+      const start = await api.post("/interview/start", {
+        role: context?.suggested_role || "Software Engineer",
+        level: context?.experience_level || "Junior",
       });
 
-      setSession({
-        session_id: res.data.session_id,
-      });
+      const sessionData = {
+        session_id: start.data.session_id,
+      };
 
-      setQuestion({
-        question_id: res.data.question_id,
-        question: res.data.question,
-      });
+      setSession(sessionData);
 
-      speak(res.data.question);
+      const firstQuestion = {
+        question_id: start.data.question_id,
+        question: start.data.question,
+      };
+
+      setQuestion(firstQuestion);
+
+      speak(start.data.question);
     } catch (err) {
       console.log(err);
-      alert("Failed to start interview");
+      alert("Failed to start resume interview");
     } finally {
       setLoading(false);
     }
@@ -105,22 +110,28 @@ export default function Interview() {
       formData.append("question_id", String(question.question_id));
       formData.append("file", audioBlob, "answer.wav");
 
-      const res = await api.post("/interview/answer", formData, {
-        headers: {
-          "Content-Type": "multipart/form-data",
+      const res = await axios.post(
+        "http://127.0.0.1:8000/interview/answer",
+        formData,
+        {
+          headers: {
+            ...headers,
+            "Content-Type": "multipart/form-data",
+          },
         },
-      });
+      );
 
+      // interview finished
       if (res.data.interview_completed) {
         speak("Interview completed. Great job!");
         setSession(null);
         setQuestion(null);
-        setRole("");
-        setLevel("Junior");
         return;
       }
 
+      // next question
       const next = res.data.next_question;
+
       setQuestion(next);
       speak(next.question);
     } catch (err) {
@@ -140,42 +151,18 @@ export default function Interview() {
         {/* HEADER */}
         <div className="text-center mb-10">
           <h1 className="text-4xl font-bold bg-gradient-to-r from-cyan-400 to-purple-400 text-transparent bg-clip-text">
-            AI Voice Interview
+            Resume Based AI Interview
           </h1>
           <p className="text-gray-400 mt-2">
-            Speak naturally. Let AI evaluate your responses.
+            AI automatically builds your interview from your resume
           </p>
         </div>
 
-        {/* SETUP */}
-        {!session && (
-          <div className="flex justify-center">
-            <div className="w-full max-w-xl bg-white/5 border border-white/10 backdrop-blur-xl p-8 rounded-2xl space-y-5">
-              <input
-                value={role}
-                onChange={(e) => setRole(e.target.value)}
-                placeholder="Enter role (e.g. Software Developer)"
-                className="w-full p-3 rounded-xl bg-black/40 border border-white/10"
-              />
-
-              <select
-                value={level}
-                onChange={(e) => setLevel(e.target.value)}
-                className="w-full p-3 rounded-xl bg-black/40 border border-white/10"
-              >
-                <option value="Junior">Junior</option>
-                <option value="Mid">Mid</option>
-                <option value="Senior">Senior</option>
-              </select>
-
-              <button
-                onClick={startInterview}
-                disabled={loading || !role.trim()}
-                className="w-full py-3 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600"
-              >
-                {loading ? "Starting..." : "Start Interview"}
-              </button>
-            </div>
+        {/* LOADING */}
+        {loading && (
+          <div className="flex justify-center text-gray-300 gap-2">
+            <Loader2 className="animate-spin" />
+            Preparing your interview...
           </div>
         )}
 

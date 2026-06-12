@@ -26,7 +26,7 @@ export default function Navbar() {
   const navItems = [
     { name: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
     { name: "Interview", path: "/interviews", icon: Brain },
-    { name: "Feedback", path: "/feedback", icon: MessageSquareText },
+    { name: "Feedback", path: "/history", icon: MessageSquareText },
   ];
 
   const isActive = (path: string) => location.pathname === path;
