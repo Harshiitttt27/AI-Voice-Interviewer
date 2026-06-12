@@ -1,9 +1,5 @@
 import api from "../services/api";
 
-const API = axios.create({
-  baseURL: "http://localhost:8000",
-});
-
 interface SignupData {
   name: string;
   email: string;
