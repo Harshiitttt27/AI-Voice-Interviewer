@@ -110,16 +110,11 @@ export default function ResumeInterview() {
       formData.append("question_id", String(question.question_id));
       formData.append("file", audioBlob, "answer.wav");
 
-      const res = await axios.post(
-        "http://127.0.0.1:8000/interview/answer",
-        formData,
-        {
-          headers: {
-            ...headers,
-            "Content-Type": "multipart/form-data",
-          },
+      const res = await api.post("/interview/answer", formData, {
+        headers: {
+          "Content-Type": "multipart/form-data",
         },
-      );
+      });
 
       // interview finished
       if (res.data.interview_completed) {
