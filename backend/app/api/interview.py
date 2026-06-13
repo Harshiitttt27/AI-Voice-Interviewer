@@ -51,15 +51,20 @@ def start_interview_api(
         level=payload.level
     )
 
+import traceback
+
 def process_interview_completion(session_id: int, user_id: int):
     db = SessionLocal()
 
     try:
+        print("🚀 Background task started")
+
         session = db.query(InterviewSession).filter(
             InterviewSession.id == session_id
         ).first()
 
         if not session:
+            print("❌ Session not found")
             return
 
         session.status = "completed"
@@ -86,19 +91,31 @@ def process_interview_completion(session_id: int, user_id: int):
             ]
         }
 
+        print("📊 Report generated")
+
         feedback_summary = feedback_agent.generate_feedback_summary(report_data)
+
+        print("🧠 AI summary generated")
 
         user = db.query(User).filter(User.id == user_id).first()
 
         if user:
+            print("📧 Sending email to:", user.email)
+
             EmailService.send_feedback_email(
                 recipient_email=user.email,
                 candidate_name=user.name,
                 feedback_summary=feedback_summary
             )
 
+            print("✅ Email sent successfully")
+
+        else:
+            print("❌ User not found")
+
     except Exception as e:
-        print("❌ Completion error:", e)
+        print("❌ Completion error:")
+        traceback.print_exc()
 
     finally:
         db.close()
