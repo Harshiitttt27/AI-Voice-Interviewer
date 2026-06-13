@@ -24,6 +24,8 @@ from app.utils.hash import get_hash
 from app.agents.feedback_agent import FeedbackAgent
 from app.services.email_service import EmailService
 from app.models.user import User
+from fastapi import BackgroundTasks
+from app.core.database import SessionLocal
 feedback_agent = FeedbackAgent()
 
 
@@ -49,19 +51,69 @@ def start_interview_api(
         level=payload.level
     )
 
+def process_interview_completion(session_id: int, user_id: int):
+    db = SessionLocal()
 
+    try:
+        session = db.query(InterviewSession).filter(
+            InterviewSession.id == session_id
+        ).first()
+
+        if not session:
+            return
+
+        session.status = "completed"
+        db.commit()
+
+        evaluations = (
+            db.query(Evaluation)
+            .join(Answer)
+            .join(Question)
+            .filter(Question.session_id == session.id)
+            .all()
+        )
+
+        report_data = {
+            "session_id": session.id,
+            "report": [
+                {
+                    "technical_score": e.technical_score,
+                    "communication_score": e.communication_score,
+                    "confidence_score": e.confidence_score,
+                    "feedback": e.feedback
+                }
+                for e in evaluations
+            ]
+        }
+
+        feedback_summary = feedback_agent.generate_feedback_summary(report_data)
+
+        user = db.query(User).filter(User.id == user_id).first()
+
+        if user:
+            EmailService.send_feedback_email(
+                recipient_email=user.email,
+                candidate_name=user.name,
+                feedback_summary=feedback_summary
+            )
+
+    except Exception as e:
+        print("❌ Completion error:", e)
+
+    finally:
+        db.close()
 # =========================
 # 2. SUBMIT ANSWER
 # =========================
 @router.post("/answer")
 async def submit_answer(
+    background_tasks: BackgroundTasks,
     session_id: int = Form(...),
     question_id: int = Form(...),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user)
+    user_id: int = Depends(get_current_user),
 ):
-
     # -------------------------
     # 1. Save audio safely
     # -------------------------
@@ -148,10 +200,7 @@ async def submit_answer(
     if not session:
         return {"error": "Session not found"}
 
-      # -------------------------
-# 8. Check Interview Completion
-# -------------------------
-    # -------------------------
+  
     # 8. Check Interview Completion
     # -------------------------
     if session.current_question_no >= session.max_questions:
@@ -183,34 +232,15 @@ async def submit_answer(
             ]
         }
 
-        # Generate AI feedback summary
-        feedback_summary = (
-            feedback_agent.generate_feedback_summary(
-                report_data
-            )
+        background_tasks.add_task(
+            process_interview_completion,
+            session.id,
+            user_id,
         )
-
-        # Fetch current user
-        user = (
-            db.query(User)
-            .filter(User.id == user_id)
-            .first()
-        )
-
-        # Send email
-        if user:
-            try:
-                EmailService.send_feedback_email(
-                    recipient_email=user.email,
-                    candidate_name=user.name,
-                    feedback_summary=feedback_summary
-                )
-            except Exception as e:
-                print(f"Email Error: {e}")
 
         return {
             "interview_completed": True,
-            "email_sent": True,
+            "email_sent": False,
             "session_id": session.id,
             "evaluation": {
                 "technical_score": evaluation.technical_score,
@@ -218,7 +248,7 @@ async def submit_answer(
                 "confidence_score": evaluation.confidence_score,
                 "feedback": evaluation.feedback
             },
-            "feedback_summary": feedback_summary
+            "message": "Report is being generated and will be emailed shortly"
         }
 
     # -------------------------
@@ -412,3 +442,5 @@ def dashboard(
         "completed": len([s for s in sessions if s.status == "completed"]),
         "active": len([s for s in sessions if s.status != "completed"])
     }
+
+
