@@ -59,9 +59,9 @@ def start_interview_api(
 # =========================
 @router.post("/answer")
 async def submit_answer(
+    background_tasks: BackgroundTasks,
     session_id: int = Form(...),
     question_id: int = Form(...),
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user),
