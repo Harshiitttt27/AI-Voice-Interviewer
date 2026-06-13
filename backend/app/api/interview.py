@@ -6,6 +6,7 @@ import shutil
 import os
 import uuid
 
+import traceback
 from app.core.database import get_db
 
 from app.schemas.interview import InterviewStartRequest
@@ -51,8 +52,156 @@ def start_interview_api(
         level=payload.level
     )
 
-import traceback
 
+
+# =========================
+# 2. SUBMIT ANSWER
+# =========================
+@router.post("/answer")
+async def submit_answer(
+    session_id: int = Form(...),
+    question_id: int = Form(...),
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user),
+):
+        # 1. Save audio
+    upload_dir = "uploads"
+    os.makedirs(upload_dir, exist_ok=True)
+
+    file_path = os.path.join(upload_dir, f"{uuid.uuid4()}.wav")
+
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    # 2. Transcribe
+    transcript = transcribe_audio(file_path)
+
+    if not transcript:
+        return {"error": "Could not transcribe audio"}
+
+    # 3. Save Answer
+    answer = Answer(
+        question_id=question_id,
+        transcript=transcript,
+        audio_path=file_path
+    )
+
+    db.add(answer)
+    db.commit()
+    db.refresh(answer)
+
+    # 4. Get Question
+    question = db.query(Question).filter(Question.id == question_id).first()
+
+    if not question:
+        return {"error": "Question not found"}
+
+    # 5. Evaluate
+    evaluation_data = evaluate_answer(
+        question=question.question_text,
+        answer=transcript
+    )
+
+    if not isinstance(evaluation_data, dict):
+        evaluation_data = {
+            "technical_score": 0,
+            "communication_score": 0,
+            "confidence_score": 0,
+            "feedback": str(evaluation_data),
+            "followup_question": ""
+        }
+
+    # 6. Save Evaluation
+    evaluation = Evaluation(
+        answer_id=answer.id,
+        technical_score=evaluation_data.get("technical_score", 0),
+        communication_score=evaluation_data.get("communication_score", 0),
+        confidence_score=evaluation_data.get("confidence_score", 0),
+        feedback=evaluation_data.get("feedback", ""),
+        followup_question=evaluation_data.get("followup_question", "")
+    )
+
+    db.add(evaluation)
+    db.commit()
+    db.refresh(evaluation)
+
+    # 7. Get session
+    session = db.query(InterviewSession).filter(
+        InterviewSession.id == session_id
+    ).first()
+
+    if not session:
+        return {"error": "Session not found"}
+
+    # 8. COMPLETION CHECK
+    if session.current_question_no >= session.max_questions:
+
+        session.status = "completed"
+        db.commit()
+
+        background_tasks.add_task(
+            process_interview_completion,
+            session.id,
+            user_id
+        )
+
+        print("🔥 Background task triggered")
+
+        return {
+            "interview_completed": True,
+            "session_id": session.id,
+            "message": "Report will be emailed shortly",
+            "evaluation": {
+                "technical_score": evaluation.technical_score,
+                "communication_score": evaluation.communication_score,
+                "confidence_score": evaluation.confidence_score,
+                "feedback": evaluation.feedback
+            }
+        }
+
+    # 9. Increment
+    session.current_question_no += 1
+    db.commit()
+
+    # 10. Next question
+    next_question_data = generate_next_question(
+        db=db,
+        session=session,
+        previous_answer=transcript,
+        previous_question=question.question_text
+    )
+
+    # 11. Save next question
+    next_question = Question(
+        session_id=session.id,
+        question_text=next_question_data["question"],
+        difficulty=next_question_data.get("difficulty", "medium"),
+        order_no=session.current_question_no + 1,
+        question_hash=get_hash(next_question_data["question"])
+    )
+
+    db.add(next_question)
+    db.commit()
+    db.refresh(next_question)
+
+    # 12. Response
+    return {
+        "interview_completed": False,
+        "session_id": session.id,
+        "evaluation": {
+            "technical_score": evaluation.technical_score,
+            "communication_score": evaluation.communication_score,
+            "confidence_score": evaluation.confidence_score,
+            "feedback": evaluation.feedback
+        },
+        "next_question": {
+            "question_id": next_question.id,
+            "question": next_question.question_text,
+            "difficulty": next_question.difficulty
+        }
+    }
 def process_interview_completion(session_id: int, user_id: int):
     db = SessionLocal()
 
@@ -78,6 +227,8 @@ def process_interview_completion(session_id: int, user_id: int):
             .all()
         )
 
+        print(f"📊 Found {len(evaluations)} evaluations")
+
         report_data = {
             "session_id": session.id,
             "report": [
@@ -91,236 +242,32 @@ def process_interview_completion(session_id: int, user_id: int):
             ]
         }
 
-        print("📊 Report generated")
+        print("🧠 Generating AI summary...")
 
         feedback_summary = feedback_agent.generate_feedback_summary(report_data)
 
-        print("🧠 AI summary generated")
-
         user = db.query(User).filter(User.id == user_id).first()
 
-        if user:
-            print("📧 Sending email to:", user.email)
-
-            EmailService.send_feedback_email(
-                recipient_email=user.email,
-                candidate_name=user.name,
-                feedback_summary=feedback_summary
-            )
-
-            print("✅ Email sent successfully")
-
-        else:
+        if not user:
             print("❌ User not found")
+            return
 
-    except Exception as e:
+        print("📧 Sending email to:", user.email)
+
+        EmailService.send_feedback_email(
+            recipient_email=user.email,
+            candidate_name=user.name,
+            feedback_summary=feedback_summary
+        )
+
+        print("✅ Email sent successfully")
+
+    except Exception:
         print("❌ Completion error:")
         traceback.print_exc()
 
     finally:
         db.close()
-# =========================
-# 2. SUBMIT ANSWER
-# =========================
-@router.post("/answer")
-async def submit_answer(
-    background_tasks: BackgroundTasks,
-    session_id: int = Form(...),
-    question_id: int = Form(...),
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user),
-):
-    # -------------------------
-    # 1. Save audio safely
-    # -------------------------
-    upload_dir = "uploads"
-    os.makedirs(upload_dir, exist_ok=True)
-
-    file_path = os.path.join(upload_dir, f"{uuid.uuid4()}.wav")
-
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    # -------------------------
-    # 2. Speech → Text (Whisper)
-    # -------------------------
-    transcript = transcribe_audio(file_path)
-
-    if not transcript:
-        return {"error": "Could not transcribe audio"}
-
-    # -------------------------
-    # 3. Save Answer
-    # -------------------------
-    answer = Answer(
-        question_id=question_id,
-        transcript=transcript,
-        audio_path=file_path
-    )
-
-    db.add(answer)
-    db.commit()
-    db.refresh(answer)
-
-    # -------------------------
-    # 4. Fetch Question
-    # -------------------------
-    question = db.query(Question).filter(
-        Question.id == question_id
-    ).first()
-
-    if not question:
-        return {"error": "Question not found"}
-
-    # -------------------------
-    # 5. Evaluate Answer
-    # -------------------------
-    evaluation_data = evaluate_answer(
-        question=question.question_text,
-        answer=transcript
-    )
-
-    # safety check
-    if not isinstance(evaluation_data, dict):
-        evaluation_data = {
-            "technical_score": 0,
-            "communication_score": 0,
-            "confidence_score": 0,
-            "feedback": str(evaluation_data),
-            "followup_question": ""
-        }
-
-    # -------------------------
-    # 6. Save Evaluation
-    # -------------------------
-    evaluation = Evaluation(
-        answer_id=answer.id,
-        technical_score=evaluation_data.get("technical_score", 0),
-        communication_score=evaluation_data.get("communication_score", 0),
-        confidence_score=evaluation_data.get("confidence_score", 0),
-        feedback=evaluation_data.get("feedback", ""),
-        followup_question=evaluation_data.get("followup_question", "")
-    )
-
-    db.add(evaluation)
-    db.commit()
-    db.refresh(evaluation)
-
-    # -------------------------
-    # 7. Get Session
-    # -------------------------
-    session = db.query(InterviewSession).filter(
-        InterviewSession.id == session_id
-    ).first()
-
-    if not session:
-        return {"error": "Session not found"}
-
-  
-    # 8. Check Interview Completion
-    # -------------------------
-    if session.current_question_no >= session.max_questions:
-
-        session.status = "completed"
-        db.commit()
-
-        # Build report data from all evaluations
-        evaluations = (
-            db.query(Evaluation)
-            .join(Answer)
-            .join(Question)
-            .filter(
-                Question.session_id == session.id
-            )
-            .all()
-        )
-
-        report_data = {
-            "session_id": session.id,
-            "report": [
-                {
-                    "technical_score": e.technical_score,
-                    "communication_score": e.communication_score,
-                    "confidence_score": e.confidence_score,
-                    "feedback": e.feedback
-                }
-                for e in evaluations
-            ]
-        }
-
-        background_tasks.add_task(
-            process_interview_completion,
-            session.id,
-            user_id,
-        )
-
-        return {
-            "interview_completed": True,
-            "email_sent": False,
-            "session_id": session.id,
-            "evaluation": {
-                "technical_score": evaluation.technical_score,
-                "communication_score": evaluation.communication_score,
-                "confidence_score": evaluation.confidence_score,
-                "feedback": evaluation.feedback
-            },
-            "message": "Report is being generated and will be emailed shortly"
-        }
-
-    # -------------------------
-    # 9. Increment Question Counter
-    # -------------------------
-    session.current_question_no += 1
-    db.commit()
-
-    
-    
-    # -------------------------
-    # 10. Generate Next Question
-    # -------------------------
-    next_question_data = generate_next_question(
-        db=db,
-        session=session,
-        previous_answer=transcript,
-        previous_question=question.question_text
-    )
-
-    # -------------------------
-    # 11. Save Next Question
-    # -------------------------
-    next_question = Question(
-        session_id=session.id,
-        question_text=next_question_data["question"],
-        difficulty=next_question_data.get("difficulty", "medium"),
-        order_no=session.current_question_no + 1,
-        question_hash=get_hash(next_question_data["question"])
-    )
-
-    db.add(next_question)
-    db.commit()
-    db.refresh(next_question)
-
-    # -------------------------
-    # 12. FINAL RESPONSE (VOICE FLOW READY)
-    # -------------------------
-    return {
-        "interview_completed": False,
-        "session_id": session.id,
-
-        "evaluation": {
-            "technical_score": evaluation.technical_score,
-            "communication_score": evaluation.communication_score,
-            "confidence_score": evaluation.confidence_score,
-            "feedback": evaluation.feedback
-        },
-
-        "next_question": {
-            "question_id": next_question.id,
-            "question": next_question.question_text,
-            "difficulty": next_question.difficulty
-        }
-    }
  # =========================
 #  GET ALL SESSIONS FOR USER
 # =========================
