@@ -14,4 +14,4 @@ class Question(Base):
     order_no = Column(Integer)
     difficulty = Column(String, nullable=True)
 
-    question_hash = Column(String, unique=True, index=True)
+    question_hash = Column(String, index=True)
